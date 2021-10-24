@@ -1,0 +1,20 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This Template Creates an SNS Topic 
+Parameters:
+
+  TopicName:
+    Type: String
+    Description:  Enter the Topic Name
+    Default: default-topic
+
+Resources:
+
+ MySNSTopic: 
+   Type: AWS::SNS::Topic
+   Properties: 
+    TopicName: !Ref TopicName     
+          
+Outputs: 
+  MyTopicArn: 
+    Description: Arn of Created SNS Topic
+    Value: !Ref MySNSTopic

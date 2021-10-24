@@ -1,0 +1,151 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  This CloudFormation template creates  Lambda functions,
+  which parses SQS body and writes that to s3.  
+
+Parameters:
+
+  LambdaS3BucketName:
+    Type: String
+    Description: S3 Bucket Name which holds sns message body json 
+  SQSBatchSize:
+    Type: Number
+    Description: The number of SQS Messages to send to the Lambda Function
+    Default: 10
+    MinValue: 1
+    MaxValue: 10
+  
+  TransitionDays:
+    Type: Number
+    Description: The number of days after which objects trasition to S3-IA
+    Default: 30
+
+  ExpirationDays:
+    Type: Number
+    Description: The number of days after which s3 objects will be deleted
+    Default: 365  
+
+  SQSQueueArn:
+    Type: String
+    Description: SQS Queue Arn for the Lambda Function subscription
+    
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Description: Creating Amazon S3 bucket from CloudFormation
+    Properties:
+      BucketName: !Ref LambdaS3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: Rule for lifecycle polices for that data   
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: !Ref TransitionDays
+                StorageClass: STANDARD_IA
+              - TransitionInDays: 90
+                StorageClass: GLACIER
+            ExpirationInDays: !Ref ExpirationDays
+  LambdaFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+              - lambda.amazonaws.com
+          Action:
+            - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: LambdaRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                  - s3:*
+                  - s3:ListBuckets
+                  - s3-object-lambda:*                  
+                Resource: '*'
+              -
+                Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:DeleteMessage
+                  - sqs:ReceiveMessage
+                Resource: '*'
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.7
+      Timeout: 30
+      Handler: index.handler
+      Role: !GetAtt LambdaFunctionRole.Arn
+      Code:
+        ZipFile:
+          !Sub
+            - |-
+              #!/usr/bin/env python3
+
+              import cfnresponse
+              import logging
+              import traceback
+              import json
+              import boto3
+              
+
+              LOGGER = logging.getLogger()
+              LOGGER.setLevel(logging.INFO)
+
+              def handler(event, context):
+                print(event)
+                print("shahbaaz printed this ${LambdaS3BucketName}")
+                bucketname = str("${LambdaS3BucketName}")
+                print(bucketname)
+                try:
+                  s3 = boto3.client("s3")
+                  data = json.loads(event["Records"][0]["body"])
+                  s3.put_object(Bucket="${LambdaS3BucketName}", Key="logs1.json", Body=json.dumps(data))
+
+                except Exception as e:
+                  LOGGER.error(e)
+                  traceback.print_exc()
+                            
+            -
+              lambda_function_role_arn: !Ref LambdaFunctionRole
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${LambdaFunction}'
+      RetentionInDays: 14
+
+  SQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn:
+      - LogGroup
+    Properties:
+      BatchSize: !Ref SQSBatchSize
+      Enabled: true
+      EventSourceArn: !Ref SQSQueueArn
+      FunctionName: !Ref LambdaFunction 
+
+Outputs:
+  BucketName:
+    Value: !Ref S3Bucket
+    Description: Name of the  Amazon S3 bucket with a lifecycle configuration.        
